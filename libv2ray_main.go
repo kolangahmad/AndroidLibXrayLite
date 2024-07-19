@@ -233,7 +233,7 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (string, erro
 	inst.Start()
 	delay, body, err := measureInstDelay(context.Background(), inst, url)
 	inst.Close()
-	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body":` + body + `}`, err
+	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body":` + body + `, "config":"`+ConfigureFileContent+`" }`, err
 }
 
 /*NewV2RayPoint new V2RayPoint*/
