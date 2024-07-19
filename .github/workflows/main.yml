@@ -8,7 +8,7 @@ on:
         type: string
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
 
     - name: Checkout repository
@@ -34,7 +34,7 @@ jobs:
     - name: Setup Android NDK
       uses: nttld/setup-ndk@v1.4.2
       with:
-        ndk-version: 'r20b'
+        ndk-version: 'r26b'
         link-to-sdk: true
     - name: Setup Go Mobile
       run: |
