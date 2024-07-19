@@ -179,8 +179,8 @@ func (v *V2RayPoint) MeasureDelay(url string) (string, error) {
 		}
 	}()
 
-	delay,body, err := measureInstDelay(context.Background(), v.Vpoint, url)
-	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body:`+body+`"}`, err
+	delay, body, err := measureInstDelay(context.Background(), v.Vpoint, url)
+	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body":` + body + `}`, err
 }
 
 type serverDetail struct {
@@ -231,9 +231,9 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (string, erro
 	}
 
 	inst.Start()
-	delay,body, err := measureInstDelay(context.Background(), inst, url)
+	delay, body, err := measureInstDelay(context.Background(), inst, url)
 	inst.Close()
-	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body:`+body+`"}`, err
+	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body":` + body + `}`, err
 }
 
 /*NewV2RayPoint new V2RayPoint*/
