@@ -2,6 +2,7 @@ package libv2ray
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -181,6 +182,15 @@ func (v *V2RayPoint) MeasureDelay(url string) (int64, error) {
 	return measureInstDelay(ctx, v.Vpoint, url)
 }
 
+type serverDetail struct {
+	Delay                int64
+	City                 string
+	Country              string
+	Ip                   string
+	ConfigureFileContent string
+	Hash                 string
+}
+
 // InitV2Env set v2 asset path
 func InitV2Env(envPath string, key string) {
 	//Initialize asset API, Since Raymond Will not let notify the asset location inside Process,
@@ -223,6 +233,31 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error
 	delay, err := measureInstDelay(context.Background(), inst, url)
 	inst.Close()
 	return delay, err
+}
+
+func MeasureDetail(ConfigureFileContent string, url string, hash string) (string, error) {
+	config, err := v2serial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
+	if err != nil {
+		return "", err
+	}
+
+	// dont listen to anything for test purpose
+	config.Inbound = nil
+	// config.App: (fakedns), log, dispatcher, InboundConfig, OutboundConfig, (stats), router, dns, (policy)
+	// keep only basic features
+	config.App = config.App[:5]
+
+	inst, err := v2core.New(config)
+	if err != nil {
+		return "", err
+	}
+
+	inst.Start()
+	resp, err := testAndGetIp(context.Background(), inst, url, ConfigureFileContent, hash)
+	inst.Close()
+	finalResp, err := json.Marshal(resp)
+	return string(finalResp), err
+
 }
 
 /*NewV2RayPoint new V2RayPoint*/
@@ -289,6 +324,61 @@ func measureInstDelay(ctx context.Context, inst *v2core.Instance, url string) (i
 	}
 	resp.Body.Close()
 	return time.Since(start).Milliseconds(), nil
+}
+
+func testAndGetIp(ctx context.Context, inst *v2core.Instance, url string, config string, hash string) (serverDetail, error) {
+	if inst == nil {
+		return serverDetail{}, errors.New("core instance nil")
+	}
+
+	tr := &http.Transport{
+		TLSHandshakeTimeout: 6 * time.Second,
+		DisableKeepAlives:   true,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dest, err := v2net.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
+			if err != nil {
+				return nil, err
+			}
+			return v2core.Dial(ctx, inst, dest)
+		},
+	}
+
+	c := &http.Client{
+		Transport: tr,
+		Timeout:   12 * time.Second,
+	}
+
+	if len(url) <= 0 {
+		url = "https://speed.cloudflare.com/meta"
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	start := time.Now()
+	resp, err := c.Do(req)
+	if err != nil {
+		return serverDetail{}, err
+	}
+	defer resp.Body.Close()
+	var jsonReponse map[string]interface{}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusForbidden {
+		return serverDetail{}, fmt.Errorf("status != 20x: %s", resp.Status)
+	}
+	err = json.NewDecoder(resp.Body).Decode(&jsonReponse)
+	if err != nil {
+		return serverDetail{Delay: time.Since(start).Milliseconds()}, err
+	}
+	city := ""
+	ip := ""
+	country := ""
+	if jsonReponse["clientIp"] != nil {
+		ip = jsonReponse["clientIp"].(string)
+	}
+	if jsonReponse["country"] != nil {
+		country = jsonReponse["country"].(string)
+	}
+	if jsonReponse["city"] != nil {
+		city = jsonReponse["city"].(string)
+	}
+	return serverDetail{Delay: time.Since(start).Milliseconds(), City: city, Country: country, Ip: ip, ConfigureFileContent: config, Hash: hash}, nil
 }
 
 // This struct creates our own log writer without datatime stamp
