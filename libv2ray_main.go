@@ -2,7 +2,6 @@ package libv2ray
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -167,7 +167,7 @@ func (v *V2RayPoint) pointloop() error {
 	return nil
 }
 
-func (v *V2RayPoint) MeasureDelay(url string) (int64, error) {
+func (v *V2RayPoint) MeasureDelay(url string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 
 	go func() {
@@ -179,7 +179,8 @@ func (v *V2RayPoint) MeasureDelay(url string) (int64, error) {
 		}
 	}()
 
-	return measureInstDelay(ctx, v.Vpoint, url)
+	delay,body, err := measureInstDelay(context.Background(), v.Vpoint, url)
+	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body:`+body+`"}`, err
 }
 
 type serverDetail struct {
@@ -212,10 +213,10 @@ func InitV2Env(envPath string, key string) {
 	}
 }
 
-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
+func MeasureOutboundDelay(ConfigureFileContent string, url string) (string, error) {
 	config, err := v2serial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
 	if err != nil {
-		return -1, err
+		return `{"delay":-1,"body:null"}`, err
 	}
 
 	// dont listen to anything for test purpose
@@ -226,38 +227,13 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error
 
 	inst, err := v2core.New(config)
 	if err != nil {
-		return -1, err
+		return `{"delay":-1,"body:null"}`, err
 	}
 
 	inst.Start()
-	delay, err := measureInstDelay(context.Background(), inst, url)
+	delay,body, err := measureInstDelay(context.Background(), inst, url)
 	inst.Close()
-	return delay, err
-}
-
-func MeasureDetail(ConfigureFileContent string, url string, hash string) (string, error) {
-	config, err := v2serial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
-	if err != nil {
-		return "", err
-	}
-
-	// dont listen to anything for test purpose
-	config.Inbound = nil
-	// config.App: (fakedns), log, dispatcher, InboundConfig, OutboundConfig, (stats), router, dns, (policy)
-	// keep only basic features
-	config.App = config.App[:5]
-
-	inst, err := v2core.New(config)
-	if err != nil {
-		return "", err
-	}
-
-	inst.Start()
-	resp, err := testAndGetIp(context.Background(), inst, url, ConfigureFileContent, hash)
-	inst.Close()
-	finalResp, err := json.Marshal(resp)
-	return string(finalResp), err
-
+	return `{"delay":` + strconv.Itoa(int(delay)) + `,"body:`+body+`"}`, err
 }
 
 /*NewV2RayPoint new V2RayPoint*/
@@ -287,9 +263,9 @@ func CheckVersionX() string {
 	return fmt.Sprintf("Lib v%d, Xray-core v%s", version, v2core.Version())
 }
 
-func measureInstDelay(ctx context.Context, inst *v2core.Instance, url string) (int64, error) {
+func measureInstDelay(ctx context.Context, inst *v2core.Instance, url string) (int64, string, error) {
 	if inst == nil {
-		return -1, errors.New("core instance nil")
+		return -1, "", errors.New("core instance nil")
 	}
 
 	tr := &http.Transport{
@@ -316,69 +292,20 @@ func measureInstDelay(ctx context.Context, inst *v2core.Instance, url string) (i
 	start := time.Now()
 	resp, err := c.Do(req)
 	if err != nil {
-		return -1, err
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return -1, fmt.Errorf("status != 20x: %s", resp.Status)
-	}
-	resp.Body.Close()
-	return time.Since(start).Milliseconds(), nil
-}
-
-func testAndGetIp(ctx context.Context, inst *v2core.Instance, url string, config string, hash string) (serverDetail, error) {
-	if inst == nil {
-		return serverDetail{}, errors.New("core instance nil")
-	}
-
-	tr := &http.Transport{
-		TLSHandshakeTimeout: 6 * time.Second,
-		DisableKeepAlives:   true,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			dest, err := v2net.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
-			if err != nil {
-				return nil, err
-			}
-			return v2core.Dial(ctx, inst, dest)
-		},
-	}
-
-	c := &http.Client{
-		Transport: tr,
-		Timeout:   12 * time.Second,
-	}
-
-	if len(url) <= 0 {
-		url = "https://speed.cloudflare.com/meta"
-	}
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	start := time.Now()
-	resp, err := c.Do(req)
-	if err != nil {
-		return serverDetail{}, err
+		return -1, "", err
 	}
 	defer resp.Body.Close()
-	var jsonReponse map[string]interface{}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusForbidden {
-		return serverDetail{}, fmt.Errorf("status != 20x: %s", resp.Status)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return -1, "", fmt.Errorf("status != 20x: %s", resp.Status)
+	} else {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		bodyString := string(bodyBytes)
+		return time.Since(start).Milliseconds(), bodyString, nil
 	}
-	err = json.NewDecoder(resp.Body).Decode(&jsonReponse)
-	if err != nil {
-		return serverDetail{Delay: time.Since(start).Milliseconds()}, err
-	}
-	city := ""
-	ip := ""
-	country := ""
-	if jsonReponse["query"] != nil {
-		ip = jsonReponse["query"].(string)
-	}
-	if jsonReponse["countryCode"] != nil {
-		country = jsonReponse["countryCode"].(string)
-	}
-	if jsonReponse["city"] != nil {
-		city = jsonReponse["city"].(string)
-	}
-	return serverDetail{Delay: time.Since(start).Milliseconds(), City: city, Country: country, Ip: ip, ConfigureFileContent: config, Hash: hash}, nil
 }
 
 // This struct creates our own log writer without datatime stamp
