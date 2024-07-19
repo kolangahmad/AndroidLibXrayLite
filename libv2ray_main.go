@@ -369,11 +369,11 @@ func testAndGetIp(ctx context.Context, inst *v2core.Instance, url string, config
 	city := ""
 	ip := ""
 	country := ""
-	if jsonReponse["clientIp"] != nil {
-		ip = jsonReponse["clientIp"].(string)
+	if jsonReponse["query"] != nil {
+		ip = jsonReponse["query"].(string)
 	}
-	if jsonReponse["country"] != nil {
-		country = jsonReponse["country"].(string)
+	if jsonReponse["countryCode"] != nil {
+		country = jsonReponse["countryCode"].(string)
 	}
 	if jsonReponse["city"] != nil {
 		city = jsonReponse["city"].(string)
